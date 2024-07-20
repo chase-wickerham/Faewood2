@@ -7,6 +7,7 @@ const router = express.Router();
 // Mock database for changes
 let changes = [];
 
+// Handle pull request
 router.post('/pull', async (req, res) => {
   const { clientID } = req.body;
   const since = req.body.since || 0;
@@ -27,6 +28,7 @@ router.post('/pull', async (req, res) => {
   res.json(response);
 });
 
+// Handle push request
 router.post('/push', async (req, res) => {
   const { clientID, mutations } = req.body;
 
