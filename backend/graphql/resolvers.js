@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const connectToDatabase = require('../dbConnection');
 
 const resolvers = {
   Query: {
@@ -8,11 +8,14 @@ const resolvers = {
       if (!context.user) {
         throw new Error('Not authenticated');
       }
-      return await User.findById(context.user.userId);
+      const db = await connectToDatabase();
+      return await db.models.User.findById(context.user.userId);
     },
   },
   Mutation: {
     signup: async (_, { email, password }) => {
+      const db = await connectToDatabase();
+      const User = db.models.User;
       const existingUser = await User.findOne({ email });
       if (existingUser) {
         throw new Error('User already exists');
@@ -27,6 +30,8 @@ const resolvers = {
       return { token, user };
     },
     login: async (_, { email, password }) => {
+      const db = await connectToDatabase();
+      const User = db.models.User;
       const user = await User.findOne({ email });
       if (!user) {
         throw new Error('No user found with this email');

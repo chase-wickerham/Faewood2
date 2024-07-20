@@ -1,33 +1,27 @@
 const express = require('express');
 const { ApolloServer } = require('apollo-server-express');
-const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 require('dotenv').config();
 
+const connectToDatabase = require('./dbConnection');
 const typeDefs = require('./graphql/schema');
 const resolvers = require('./graphql/resolvers');
+const { push, pull } = require('./replicache/replicacheHandlers');
 
 async function startServer() {
   const app = express();
 
-  // Enable CORS for the frontend origin
   app.use(cors({
     origin: 'http://67.207.82.0:3001', // Your frontend URL
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-replicache-auth'],
   }));
 
-  if (!process.env.MONGODB_URI) {
-    throw new Error('MONGODB_URI is not defined in the environment variables');
-  }
+  app.use(express.json());
 
-  try {
-    await mongoose.connect(process.env.MONGODB_URI);
-    console.log('Connected to MongoDB');
-  } catch (error) {
-    console.error('Error connecting to MongoDB:', error);
-    process.exit(1);
-  }
+  // Connect to MongoDB
+  await connectToDatabase();
 
   const server = new ApolloServer({
     typeDefs,
@@ -51,8 +45,12 @@ async function startServer() {
   server.applyMiddleware({ 
     app, 
     path: '/graphql',
-    cors: false // Disable Apollo Server's default CORS as we're handling it with Express
+    cors: false
   });
+
+  // Add Replicache routes
+  app.post('/replicache-push', push);
+  app.post('/replicache-pull', pull);
 
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, '0.0.0.0', () => {

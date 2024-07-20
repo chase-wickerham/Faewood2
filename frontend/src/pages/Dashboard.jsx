@@ -1,8 +1,12 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, gql } from '@apollo/client';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import { Replicache } from 'replicache';
+import ErrorBoundary from './ErrorBoundary';
+import debounce from 'lodash/debounce';
 
-// GraphQL query to fetch user data
 const GET_USER = gql`
   query GetUser {
     me {
@@ -14,13 +18,79 @@ const GET_USER = gql`
 
 const Dashboard = ({ setIsAuthenticated }) => {
   const navigate = useNavigate();
-  // Execute the GetUser query
-  const { loading, error, data, refetch } = useQuery(GET_USER);
+  const { loading, error, data } = useQuery(GET_USER);
+  const [editorContent, setEditorContent] = useState('');
+  const repRef = useRef(null);
+
+  const initReplicache = useCallback(async () => {
+    if (!data || !data.me) {
+      console.log('User data not available, skipping Replicache initialization');
+      return;
+    }
+
+    console.log('Initializing Replicache with user ID:', data.me.id);
+    if (repRef.current) {
+      console.log('Closing existing Replicache instance');
+      await repRef.current.close();
+    }
+
+    repRef.current = new Replicache({
+      name: `user-editor-${data.me.id}`,
+      licenseKey: import.meta.env.VITE_REPLICACHE_LICENSE_KEY,
+      pushURL: `${import.meta.env.VITE_API_URL}/replicache-push`,
+      pullURL: `${import.meta.env.VITE_API_URL}/replicache-pull`,
+      auth: data.me.id,
+    });
+
+    console.log('Replicache instance created');
+
+    repRef.current.mutate.updateEditorContent = async (tx, args) => {
+      console.log('Updating editor content in Replicache', args);
+      if (args && args.content !== undefined) {
+        await tx.put('editorContent', args.content);
+      } else {
+        console.error('Invalid arguments for updateEditorContent', args);
+      }
+    };
+
+    try {
+      await repRef.current.pull();
+      console.log('Initial Replicache pull completed');
+    } catch (err) {
+      console.error('Error during initial Replicache pull:', err);
+    }
+  }, [data]);
 
   useEffect(() => {
-    console.log('Dashboard mounted, refetching user data');
-    refetch();
-  }, [refetch]);
+    if (data && data.me) {
+      initReplicache();
+    }
+  }, [data, initReplicache]);
+
+  useEffect(() => {
+    if (!repRef.current) {
+      console.log('Replicache not initialized, skipping subscription');
+      return;
+    }
+
+    console.log('Setting up Replicache subscription');
+    const subscribe = async () => {
+      try {
+        for await (const { editorContent } of repRef.current.subscribe()) {
+          console.log('Received update from Replicache subscription:', editorContent);
+          if (editorContent !== undefined) {
+            setEditorContent(editorContent);
+          }
+        }
+      } catch (err) {
+        if (err.message !== "Closed") {
+          console.error('Error in Replicache subscription:', err);
+        }
+      }
+    };
+
+    subscribe();
+  }, []);
 
   const handleLogout = () => {
     console.log('Logging out...');
@@ -28,6 +98,28 @@ const Dashboard = ({ setIsAuthenticated }) => {
     setIsAuthenticated(false);
     console.log('Token removed, authentication state updated');
     navigate('/');
+  };
+
+  const debouncedSave = useCallback(
+    debounce((content) => {
+      if (repRef.current && repRef.current.mutate && repRef.current.mutate.updateEditorContent) {
+        repRef.current.mutate.updateEditorContent({
+          userID: data.me.id,
+          content: content
+        }).catch(err => 
+          console.error('Error updating editor content:', err)
+        );
+      } else {
+        console.error('Replicache or mutator not properly initialized');
+      }
+    }, 5000),
+    [data]
+  );
+
+  const handleEditorChange = (content) => {
+    console.log('Editor content changed:', content);
+    setEditorContent(content);
+    debouncedSave(content);
   };
 
   console.log('Dashboard render - loading:', loading, 'error:', error, 'data:', data);
@@ -53,6 +145,13 @@ const Dashboard = ({ setIsAuthenticated }) => {
           <p>User ID: {data.me.id}</p>
         </>
       )}
+      <ErrorBoundary>
+        <ReactQuill 
+          value={editorContent} 
+          onChange={handleEditorChange}
+          style={{ height: '300px', marginBottom: '50px' }}
+        />
+      </ErrorBoundary>
       <button onClick={handleLogout}>Logout</button>
     </div>
   );
