@@ -1,27 +1,44 @@
 const bcrypt = require('bcryptjs');
-const { generateToken } = require('../utils/jwt');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 const resolvers = {
   Query: {
-    hello: () => 'Hello world!',
-    getUser: async (parent, args) => {
-      return await User.findById(args.id);
-    },
-    getUsers: async () => {
-      return await User.find();
+    me: async (_, __, context) => {
+      if (!context.user) {
+        throw new Error('Not authenticated');
+      }
+      return await User.findById(context.user.userId);
     },
   },
   Mutation: {
-    createUser: async (parent, args) => {
-      const hashedPassword = await bcrypt.hash(args.password, 10);
-      const user = new User({
-        name: args.name,
-        email: args.email,
-        password: hashedPassword,
-      });
+    signup: async (_, { email, password }) => {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        throw new Error('User already exists');
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const user = new User({ email, password: hashedPassword });
       await user.save();
-      const token = generateToken(user);
+
+      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+
+      return { token, user };
+    },
+    login: async (_, { email, password }) => {
+      const user = await User.findOne({ email });
+      if (!user) {
+        throw new Error('No user found with this email');
+      }
+
+      const valid = await bcrypt.compare(password, user.password);
+      if (!valid) {
+        throw new Error('Invalid password');
+      }
+
+      const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET);
+
       return { token, user };
     },
   },
